@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UniPulse</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--ink:#0f2a3d;--tide:#1f6f8b;--bg:#f3f6f8;--card:#fff;--line:#d5dee5;--g:#2e9e6b;--y:#e0a526;--r:#d64545;--mute:#5a6d7b}
+@media (prefers-color-scheme:dark){:root{--ink:#e8f0f5;--tide:#6cc0dc;--bg:#0c1a24;--card:#142736;--line:#26404f;--mute:#9db1be}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:14px 16px 0;max-width:900px;margin:auto}
+h1{margin:0;font-size:1.5rem;letter-spacing:-.02em}
+header p{margin:2px 0 10px;color:var(--mute);font-size:.9rem}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line)}
+nav button{flex:1;padding:10px;border:0;background:none;color:var(--mute);font:inherit;font-weight:600;border-bottom:3px solid transparent;cursor:pointer}
+nav button[aria-selected=true]{color:var(--ink);border-color:var(--tide)}
+main{max-width:900px;margin:auto;padding:14px 16px 40px}
+section{display:none}section.on{display:block}
+#banner{display:none;background:#fff3cd;color:#5c4400;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-size:.9rem}
+#map{height:min(60vh,480px);border-radius:10px;border:1px solid var(--line);background:var(--card)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0;font-size:.9rem;color:var(--mute)}
+.dot{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+label{display:block;font-weight:600;margin:8px 0 4px}
+select,button.go{width:100%;padding:12px;font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+button.go{background:var(--tide);color:#fff;border:0;font-weight:700;cursor:pointer;margin-top:12px}
+button.go:disabled{opacity:.5;cursor:default}
+button:focus-visible,select:focus-visible{outline:3px solid var(--tide);outline-offset:2px}
+.res{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px;text-align:center}
+.res div{background:var(--bg);border-radius:8px;padding:8px 2px}.res b{display:block;font-size:1.25rem}.res span{font-size:.75rem;color:var(--mute)}
+.row{display:grid;grid-template-columns:1fr 70px;gap:4px 10px;margin:10px 0;align-items:center}
+.bar{grid-column:1/3;height:8px;border-radius:4px;background:var(--line);overflow:hidden}.bar i{display:block;height:100%}
+.small{font-size:.85rem;color:var(--mute)}
+#msg{margin-top:10px;min-height:1.4em}
+</style>
+</head>
+<body>
+<header>
+  <h1>UniPulse</h1>
+  <p>Student-measured Wi-Fi quality across PASUM</p>
+  <nav role="tablist">
+    <button role="tab" aria-selected="true" data-t="map">Map</button>
+    <button role="tab" aria-selected="false" data-t="test">Check my Wi-Fi</button>
+    <button role="tab" aria-selected="false" data-t="rank">Ranking</button>
+  </nav>
+</header>
+<main>
+  <div id="banner"><b>Sample data.</b> These are not real measurements. Set API_URL to show real readings.</div>
+
+  <section id="map-s" class="on">
+    <div id="map" aria-label="Floor plan with Wi-Fi quality by zone"></div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--g)"></i>Good</span>
+      <span><i class="dot" style="background:var(--y)"></i>Slow</span>
+      <span><i class="dot" style="background:var(--r)"></i>Poor</span>
+      <span><i class="dot" style="background:#8a99a5"></i>Not enough readings</span>
+    </div>
+    <p class="small" id="thr"></p>
+  </section>
+
+  <section id="test-s">
+    <div class="card">
+      <label for="zone">Where are you?</label>
+      <select id="zone"></select>
+      <label style="font-weight:400;margin-top:12px"><input type="checkbox" id="ok"> I agree to send this reading anonymously. Only the zone, time and speed numbers are saved.</label>
+      <button class="go" id="run">Run speed check</button>
+      <div id="msg" role="status"></div>
+      <div class="res" id="res" hidden>
+        <div><b id="rd">-</b><span>Down Mbps</span></div><div><b id="ru">-</b><span>Up Mbps</span></div>
+        <div><b id="rl">-</b><span>Latency ms</span></div><div><b id="rj">-</b><span>Jitter ms</span></div>
+      </div>
+    </div>
+    <p class="small">Takes about 15 seconds and uses roughly 8 MB of data. Measures your connection to the internet, which includes campus Wi-Fi and its uplink.</p>
+  </section>
+
+  <section id="rank-s">
+    <div class="card" id="rank"></div>
+    <p class="small">Median download speed from the latest readings per zone. Zones with few readings are flagged. This is a sample, not a full survey.</p>
+  </section>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ===== EDIT THIS BLOCK ===== */
+const CFG = {
+  API_URL: "",            // Apps Script web app URL (see README). Empty = sample data.
+  TOKEN: "pasum2026",     // must match TOKEN in Code.gs
+  FLOORPLAN: "",          // e.g. "floorplan.png" (put the image next to this file). Empty = grid.
+  W: 1000, H: 600,        // floor plan size in pixels
+  GOOD: 25, SLOW: 8,      // Mbps thresholds. Set these from your own task tests (video call, file upload).
+  MIN_N: 5, LAST_N: 20,   // minimum readings to colour a zone; readings used per zone
+  REFRESH_MS: 20000
+};
+const ZONES = [ // x,y are pixel positions on the floor plan
+  {id:"dku",  name:"DKU lecture hall",  x:200, y:420},
+  {id:"lib3", name:"Library level 3",   x:700, y:380},
+  {id:"lib1", name:"Library level 1",   x:760, y:150},
+  {id:"caf",  name:"Cafeteria",         x:450, y:200},
+  {id:"lounge",name:"Hostel lounge",    x:880, y:480},
+  {id:"admin",name:"Admin block",       x:150, y:130}
+];
+/* =========================== */
+
+const $ = s => document.querySelector(s);
+const med = a => { if(!a.length) return null; const s=[...a].sort((x,y)=>x-y), m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2; };
+let READINGS = [];
+
+/* tabs */
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.setAttribute("aria-selected", x===b));
+  document.querySelectorAll("section").forEach(s => s.classList.toggle("on", s.id === b.dataset.t+"-s"));
+  if(b.dataset.t==="map") setTimeout(()=>map.invalidateSize(),50);
+});
+$("#zone").innerHTML = ZONES.map(z=>`<option value="${z.id}">${z.name}</option>`).join("");
+$("#thr").textContent = `Good: ${CFG.GOOD} Mbps or more. Slow: ${CFG.SLOW} to ${CFG.GOOD}. Poor: under ${CFG.SLOW}. Zones need ${CFG.MIN_N}+ readings.`;
+
+/* map */
+const map = L.map("map",{crs:L.CRS.Simple,minZoom:-2,attributionControl:false});
+const bounds = [[0,0],[CFG.H,CFG.W]];
+if(CFG.FLOORPLAN) L.imageOverlay(CFG.FLOORPLAN,bounds).addTo(map);
+else L.rectangle(bounds,{color:"#8a99a5",weight:1,fill:true,fillOpacity:.08,dashArray:"4"}).addTo(map);
+map.fitBounds(bounds);
+const layer = L.layerGroup().addTo(map);
+
+function summarize(){
+  return ZONES.map(z=>{
+    const r = READINGS.filter(x=>x.zone===z.id).sort((a,b)=>new Date(b.t)-new Date(a.t)).slice(0,CFG.LAST_N);
+    return {...z, n:r.length, down:med(r.map(x=>+x.down)), up:med(r.map(x=>+x.up)), lat:med(r.map(x=>+x.lat))};
+  });
+}
+function colour(s){ if(s.n<CFG.MIN_N||s.down==null) return "#8a99a5"; return s.down>=CFG.GOOD?"#2e9e6b":s.down>=CFG.SLOW?"#e0a526":"#d64545"; }
+const f = v => v==null?"-":(v<10?v.toFixed(1):Math.round(v));
+
+function render(){
+  const S = summarize();
+  layer.clearLayers();
+  S.forEach(s=>{
+    L.circleMarker([CFG.H-s.y,s.x],{radius:16,color:"#fff",weight:2,fillColor:colour(s),fillOpacity:.9})
+     .bindPopup(`<b>${s.name}</b><br>Down ${f(s.down)} Mbps, Up ${f(s.up)} Mbps<br>Latency ${f(s.lat)} ms<br>${s.n} readings`).addTo(layer);
+    L.marker([CFG.H-s.y-34,s.x],{icon:L.divIcon({className:"",html:`<div style="font:600 12px system-ui;white-space:nowrap;transform:translateX(-50%);color:#0f2a3d;text-shadow:0 0 3px #fff,0 0 3px #fff">${s.name}</div>`})}).addTo(layer);
+  });
+  const ranked = [...S].filter(s=>s.down!=null).sort((a,b)=>a.down-b.down);
+  const max = Math.max(...ranked.map(s=>s.down),CFG.GOOD*2);
+  $("#rank").innerHTML = ranked.length ? ranked.map(s=>`<div class="row"><span><b>${s.name}</b>${s.n<CFG.MIN_N?' <span class="small">(low data)</span>':''}</span><b style="text-align:right">${f(s.down)} Mbps</b><div class="bar"><i style="width:${Math.min(100,s.down/max*100)}%;background:${colour(s)}"></i></div><span class="small">${s.n} readings</span></div>`).join("") : "No readings yet.";
+}
+
+/* data */
+function demo(){
+  const base={dku:6,lib3:48,lib1:35,caf:18,lounge:12,admin:70}; let seed=7; const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+  const out=[]; ZONES.forEach(z=>{for(let i=0;i<12;i++)out.push({t:new Date(Date.now()-i*36e5).toISOString(),zone:z.id,down:Math.max(1,base[z.id]*(0.6+rnd()*.8)),up:base[z.id]*.4,lat:15+rnd()*40});});
+  return out;
+}
+async function load(){
+  if(!CFG.API_URL){ READINGS=demo(); $("#banner").style.display="block"; render(); return; }
+  try{ const r=await fetch(CFG.API_URL+"?action=readings"); READINGS=await r.json(); $("#banner").style.display="none"; }
+  catch(e){ $("#banner").style.display="block"; $("#banner").textContent="Could not load live data. Showing the last data received."; }
+  render();
+}
+load(); setInterval(load,CFG.REFRESH_MS);
+
+/* speed check: Cloudflare public test endpoints, no server needed */
+const CF="https://speed.cloudflare.com";
+async function latency(){ const t=[]; for(let i=0;i<8;i++){ const a=performance.now(); await fetch(`${CF}/__down?bytes=0&r=${Math.random()}`,{cache:"no-store"}); t.push(performance.now()-a);} 
+  const m=med(t); let j=0; for(let i=1;i<t.length;i++) j+=Math.abs(t[i]-t[i-1]); return {lat:m, jit:j/(t.length-1)}; }
+async function down(){ const a=performance.now(); const r=await fetch(`${CF}/__down?bytes=6000000&r=${Math.random()}`,{cache:"no-store"}); const b=await r.arrayBuffer(); return b.byteLength*8/((performance.now()-a)/1000)/1e6; }
+async function up(){ const body=new Blob([new Uint8Array(2000000)]); const a=performance.now(); await fetch(`${CF}/__up`,{method:"POST",body,cache:"no-store"}); return 2000000*8/((performance.now()-a)/1000)/1e6; }
+
+$("#run").onclick = async () => {
+  const msg=$("#msg"), btn=$("#run");
+  if(!$("#ok").checked){ msg.textContent="Tick the consent box first."; return; }
+  btn.disabled=true; $("#res").hidden=true;
+  try{
+    msg.textContent="Testing latency..."; const l=await latency();
+    msg.textContent="Testing download..."; const d=await down();
+    msg.textContent="Testing upload..."; const u=await up();
+    $("#rd").textContent=f(d); $("#ru").textContent=f(u); $("#rl").textContent=f(l.lat); $("#rj").textContent=f(l.jit); $("#res").hidden=false;
+    const rec={token:CFG.TOKEN,zone:$("#zone").value,down:+d.toFixed(2),up:+u.toFixed(2),lat:+l.lat.toFixed(1),jitter:+l.jit.toFixed(1)};
+    if(CFG.API_URL){
+      await fetch(CFG.API_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(rec)});
+      READINGS.push({...rec,t:new Date().toISOString()}); render(); msg.textContent="Saved. Thank you. The map has been updated.";
+    } else msg.textContent="Done, but not saved: API_URL is not set.";
+  }catch(e){ msg.textContent="The test failed. Check your connection and try again. ("+e.message+")"; }
+  btn.disabled=false;
+};
+</script>
+</body>
+</html>
