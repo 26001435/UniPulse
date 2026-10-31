@@ -72,7 +72,7 @@ button:focus-visible,select:focus-visible{outline:3px solid var(--tide);outline-
         <div><b id="rl">-</b><span>Latency ms</span></div><div><b id="rj">-</b><span>Jitter ms</span></div>
       </div>
     </div>
-    <p class="small">Takes about 25 seconds and can use 50 to 200 MB at fast speeds. It measures the path from your phone to our test server, so every reading uses the same method.</p>
+    <p class="small">Takes about 15 seconds and uses roughly 8 MB of data. Measures your connection to the internet, which includes campus Wi-Fi and its uplink.</p>
   </section>
 
   <section id="rank-s">
@@ -82,18 +82,16 @@ button:focus-visible,select:focus-visible{outline:3px solid var(--tide);outline-
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="speedtest.js"></script>
 <script>
 /* ===== EDIT THIS BLOCK ===== */
 const CFG = {
-  API_URL: "",            // Apps Script web app URL (see README). Empty = sample data.
-  TOKEN: "pasum2026",     // must match TOKEN in Code.gs
-  FLOORPLAN: "",          // e.g. "floorplan.png" (put the image next to this file). Empty = grid.
+  API_URL: "https://script.google.com/macros/s/AKfycbzuHhBZt3hZwDq6fhAnekbkDqFtoshERHhCsugrYxg08KJuZ2iCWo-_cEuuDxd-qJQ_Mw/exec",            // Apps Script web app URL (see README). Empty = sample data.
+  TOKEN: "pasum2026/2027",     // must match TOKEN in Code.gs
+  FLOORPLAN: "floorplan.png",          // e.g. "floorplan.png" (put the image next to this file). Empty = grid.
   W: 1000, H: 600,        // floor plan size in pixels
   GOOD: 25, SLOW: 8,      // Mbps thresholds. Set these from your own task tests (video call, file upload).
   MIN_N: 5, LAST_N: 20,   // minimum readings to colour a zone; readings used per zone
-  REFRESH_MS: 20000,
-  LS_SERVER: ""           // HTTPS URL of your LibreSpeed backend, ending in "/" (see README)
+  REFRESH_MS: 20000
 };
 const ZONES = [ // x,y are pixel positions on the floor plan
   {id:"dku",  name:"DKU lecture hall",  x:200, y:420},
@@ -162,30 +160,23 @@ async function load(){
 }
 load(); setInterval(load,CFG.REFRESH_MS);
 
-/* speed check: LibreSpeed (open source). Needs the backend from the README. */
-function runLS(onTick){
-  return new Promise((resolve,reject)=>{
-    const st=new Speedtest(); let last={};
-    st.setParameter("test_order","P_D_U"); st.setParameter("getIp_ispInfo",false);
-    st.setParameter("telemetry_level","off"); st.setParameter("time_dl_max",8); st.setParameter("time_ul_max",8); st.setParameter("count_ping",10);
-    st.setSelectedServer({name:"UniPulse test server",server:CFG.LS_SERVER,dlURL:"garbage.php",ulURL:"empty.php",pingURL:"empty.php",getIpURL:"getIP.php"});
-    st.onupdate=d=>{last=d;onTick(d);};
-    st.onend=aborted=>aborted?reject(new Error("test aborted")):resolve(last);
-    st.start();
-  });
-}
+/* speed check: Cloudflare public test endpoints, no server needed */
+const CF="https://speed.cloudflare.com";
+async function latency(){ const t=[]; for(let i=0;i<8;i++){ const a=performance.now(); await fetch(`${CF}/__down?bytes=0&r=${Math.random()}`,{cache:"no-store"}); t.push(performance.now()-a);}
+  const m=med(t); let j=0; for(let i=1;i<t.length;i++) j+=Math.abs(t[i]-t[i-1]); return {lat:m, jit:j/(t.length-1)}; }
+async function down(){ const a=performance.now(); const r=await fetch(`${CF}/__down?bytes=6000000&r=${Math.random()}`,{cache:"no-store"}); const b=await r.arrayBuffer(); return b.byteLength*8/((performance.now()-a)/1000)/1e6; }
+async function up(){ const body=new Blob([new Uint8Array(2000000)]); const a=performance.now(); await fetch(`${CF}/__up`,{method:"POST",body,cache:"no-store"}); return 2000000*8/((performance.now()-a)/1000)/1e6; }
+
 $("#run").onclick = async () => {
   const msg=$("#msg"), btn=$("#run");
   if(!$("#ok").checked){ msg.textContent="Tick the consent box first."; return; }
-  if(!CFG.LS_SERVER){ msg.textContent="Set CFG.LS_SERVER to your LibreSpeed backend first."; return; }
   btn.disabled=true; $("#res").hidden=true;
-  const stage={1:"Testing download...",2:"Testing latency...",3:"Testing upload..."};
   try{
-    const d=await runLS(x=>{ if(stage[x.testState]) msg.textContent=stage[x.testState]; });
-    const down=+d.dlStatus, up=+d.ulStatus, lat=+d.pingStatus, jit=+d.jitterStatus;
-    if(!(down>0)) throw new Error("no download result");
-    $("#rd").textContent=f(down); $("#ru").textContent=f(up); $("#rl").textContent=f(lat); $("#rj").textContent=f(jit); $("#res").hidden=false;
-    const rec={token:CFG.TOKEN,zone:$("#zone").value,down:+down.toFixed(2),up:+up.toFixed(2),lat:+lat.toFixed(1),jitter:+jit.toFixed(1)};
+    msg.textContent="Testing latency..."; const l=await latency();
+    msg.textContent="Testing download..."; const d=await down();
+    msg.textContent="Testing upload..."; const u=await up();
+    $("#rd").textContent=f(d); $("#ru").textContent=f(u); $("#rl").textContent=f(l.lat); $("#rj").textContent=f(l.jit); $("#res").hidden=false;
+    const rec={token:CFG.TOKEN,zone:$("#zone").value,down:+d.toFixed(2),up:+u.toFixed(2),lat:+l.lat.toFixed(1),jitter:+l.jit.toFixed(1)};
     if(CFG.API_URL){
       await fetch(CFG.API_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(rec)});
       READINGS.push({...rec,t:new Date().toISOString()}); render(); msg.textContent="Saved. Thank you. The map has been updated.";
